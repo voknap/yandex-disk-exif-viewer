@@ -1,6 +1,6 @@
 #exif-info-overlay {
     position: fixed;
-    top: 60px;
+    top: 50px;
     left: 20px;
     background: rgba(60, 60, 60, 1.0);
     color: white;

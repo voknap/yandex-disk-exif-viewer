@@ -236,72 +236,125 @@ function displayOverlay(data, errorMsg) {
     }
 
     overlay.innerHTML = `
-        <h3>EXIF Info</h3>
         ${rows || '<p>Данные пусты</p>'}
         ${hasGPS ? '<div id="exif-map" style="height: 200px; width: 100%; margin-top: 10px; border-radius: 8px; z-index: 10000;"></div>' : ''}
-        <button id="exif-close-btn">Закрыть</button>
     `;
-    document.getElementById('exif-close-btn').onclick = removeOverlay;
+
+    // Создаем кнопку-крестик в углу
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = `
+        <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none">
+            <path d="M20.7457 3.32851C20.3552 2.93798 19.722 2.93798 19.3315 3.32851L12.0371 10.6229L4.74275 3.32851C4.35223 2.93798 3.71906 2.93798 3.32854 3.32851C2.93801 3.71903 2.93801 4.3522 3.32854 4.74272L10.6229 12.0371L3.32856 19.3314C2.93803 19.722 2.93803 20.3551 3.32856 20.7457C3.71908 21.1362 4.35225 21.1362 4.74277 20.7457L12.0371 13.4513L19.3315 20.7457C19.722 21.1362 20.3552 21.1362 20.7457 20.7457C21.1362 20.3551 21.1362 19.722 20.7457 19.3315L13.4513 12.0371L20.7457 4.74272C21.1362 4.3522 21.1362 3.71903 20.7457 3.32851Z" fill="white" stroke="white" stroke-width="1.0" stroke-linejoin="round"/>
+        </svg>
+    `;
+    closeBtn.id = 'exif-close-btn';
+    closeBtn.style.cssText = `
+        position: absolute !important;
+        top: 4px !important;
+        right: 4px !important;
+        width: 28px !important;
+        height: 28px !important;
+        background: transparent !important;
+        border: none !important;
+        border-radius: 6px !important;
+        cursor: pointer !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 4px !important;
+        margin: 0 !important;
+        transition: background 0.2s;
+        z-index: 100000 !important;
+    `;
+
+    closeBtn.onmouseenter = () => closeBtn.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
+    closeBtn.onmouseleave = () => closeBtn.style.backgroundColor = 'transparent';
+    closeBtn.onclick = removeOverlay;
+
+    overlay.appendChild(closeBtn);
 
     if (hasGPS) {
         renderMicroMap('exif-map', lat, lon, 15);
     }
 }
 
+const MAP_LAYERS = [
+    { name: 'HOT', url: 'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', icon: '🏥' },
+    { name: 'Вело', url: 'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', icon: '🚲' },
+    { name: 'OSM', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', icon: '🌍' },
+    { name: 'Dark', url: 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', icon: '🌙' },
+    { name: 'Voyager', url: 'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', icon: '✈️' },
+    { name: 'OSM DE', url: 'https://a.tile.openstreetmap.de/tiles/osmde/{z}/{x}/{y}.png', icon: '🇩🇪' },
+    { name: 'ArcGIS', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', icon: '🗺️' }
+];
+
 /**
- * Продвинутый Микро-движок карты (OSM + Zoom + Drag)
+ * Продвинутый Микро-движок карты (OSM + Zoom + Drag + Layers)
  */
 function renderMicroMap(containerId, initialLat, initialLon, initialZoom = 15) {
     const container = document.getElementById(containerId);
     if (!container) return;
-    
+
     let currentLat = initialLat;
     let currentLon = initialLon;
     let currentZoom = initialZoom;
-    
+    let currentLayerIndex = 0;
+
     // Состояние перетаскивания
     let isDragging = false;
     let startX, startY;
     let mapLeft = 0, mapTop = 0;
 
+    // Сначала загружаем сохраненный слой из памяти браузера
+    chrome.storage.local.get(['lastLayerIndex'], (result) => {
+        if (result.lastLayerIndex !== undefined) {
+            currentLayerIndex = result.lastLayerIndex;
+        }
+        redraw(); // Рисуем только после того, как узнали какой слой нужен
+    });
+
     function redraw() {
+        const layer = MAP_LAYERS[currentLayerIndex];
+
         const n = Math.pow(2, currentZoom);
         const x = ((currentLon + 180) / 360) * n;
         const latRad = currentLat * Math.PI / 180;
         const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
-        
+
         const tileX = Math.floor(x);
         const tileY = Math.floor(y);
         const offsetX = (x - tileX) * 256;
         const offsetY = (y - tileY) * 256;
-        
+
         container.style.position = 'relative';
         container.style.overflow = 'hidden';
         container.style.backgroundColor = '#ddd';
         container.style.cursor = 'grab';
         container.innerHTML = '';
-        
+
         const mapCanvas = document.createElement('div');
         mapCanvas.id = 'map-canvas';
         mapCanvas.style.position = 'absolute';
-        mapCanvas.style.width = '1280px'; // 5x256 для большего запаса хода
+        mapCanvas.style.width = '1280px';
         mapCanvas.style.height = '1280px';
-        
+
         const containerWidth = container.offsetWidth || 300;
         const containerHeight = container.offsetHeight || 200;
-        
-        // Начальное положение холста (точка в центре)
-        mapLeft = containerWidth / 2 - (offsetX + 512); // 512 = 2 * 256 (центр сетки 5x5)
-        mapTop = containerHeight / 2 - (offsetY + 512);
-        
+
+        mapLeft = (containerWidth / 2 - (offsetX + 512)) + 0;
+        mapTop = (containerHeight / 2 - (offsetY + 512)) + 12;
+
         mapCanvas.style.left = `${mapLeft}px`;
         mapCanvas.style.top = `${mapTop}px`;
-        
-        // 2. Рисуем сетку 5x5 тайлов
+
         for (let i = -2; i <= 2; i++) {
             for (let j = -2; j <= 2; j++) {
                 const img = document.createElement('img');
-                img.src = `https://tile.openstreetmap.org/${currentZoom}/${tileX + i}/${tileY + j}.png`;
+                img.src = layer.url
+                    .replace('{z}', currentZoom)
+                    .replace('{x}', tileX + i)
+                    .replace('{y}', tileY + j);
+
                 img.style.position = 'absolute';
                 img.style.left = `${(i + 2) * 256}px`;
                 img.style.top = `${(j + 2) * 256}px`;
@@ -312,13 +365,22 @@ function renderMicroMap(containerId, initialLat, initialLon, initialZoom = 15) {
                 mapCanvas.appendChild(img);
             }
         }
-        
-        // 3. Маркер
+
         const marker = document.createElement('div');
         marker.innerHTML = `
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="red" stroke="white" stroke-width="2">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="#7f7f7fff" stroke="#3b3b3bff" stroke-width="0">
                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
-                <circle cx="12" cy="9" r="2.5" fill="white"/>
+                
+                <circle cx="12" cy="9" r="5" fill="#a6a6a6ff" />
+
+                <g transform="translate(7.2, 4.2) scale(0.0185)">
+                    <path fill="#3b3b3bff" d="M289.544,1.991l-74.577,129.132h267.532C446.312,65.22,373.904,11.416,289.544,1.991z M52.053,102.727l74.542,129.149
+                        L260.36,0.19C185.189-1.428,102.395,34.375,52.053,102.727z M20.544,358.77l149.118,0.018L35.896,127.102
+                        C-3.088,191.388-13.483,281.002,20.544,358.77z M226.525,514.077l74.577-129.132H33.571
+                        C69.757,450.849,142.166,504.652,226.525,514.077z M464.017,413.342l-74.542-129.149L255.709,515.878
+                        C330.88,517.496,413.675,481.693,464.017,413.342z M495.525,157.299l-149.118-0.018l133.766,231.686
+                        C519.157,324.681,529.553,235.066,495.525,157.299z"/>
+                </g>
             </svg>
         `;
         marker.style.position = 'absolute';
@@ -327,49 +389,68 @@ function renderMicroMap(containerId, initialLat, initialLon, initialZoom = 15) {
         marker.style.transform = 'translate(-50%, -100%)';
         marker.style.zIndex = '1000';
         marker.style.pointerEvents = 'none';
-        
+
         mapCanvas.appendChild(marker);
         container.appendChild(mapCanvas);
 
         // 4. Кнопки управления
-        const controls = document.createElement('div');
-        controls.style.position = 'absolute';
-        controls.style.top = '10px';
-        controls.style.left = '10px';
-        controls.style.display = 'flex';
-        controls.style.flexDirection = 'column';
-        controls.style.gap = '5px';
-        controls.style.zIndex = '2000';
+        const zoomControls = document.createElement('div');
+        zoomControls.style.cssText = `
+            position: absolute !important;
+            top: 0px !important;
+            left: 8px !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 0px !important;
+            z-index: 20000 !important;
+        `;
+
+        const layerControls = document.createElement('div');
+        layerControls.style.position = 'absolute';
+        layerControls.style.bottom = '11px';
+        layerControls.style.left = '8px';
+        layerControls.style.zIndex = '2000';
 
         const btnStyle = `
-            width: 32px; height: 32px; 
+            width: 28px; height: 28px; 
             background: white; border: none; 
-            border-radius: 6px; cursor: pointer; 
+            border-radius: 5px; cursor: pointer; 
             font-size: 20px; font-weight: bold; 
             display: flex; align-items: center; justify-content: center;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            color: #333; transition: background 0.2s;
+            color: #5c5c5cff; transition: background 0.2s;
         `;
 
         const btnPlus = document.createElement('button');
         btnPlus.innerHTML = '+';
         btnPlus.style.cssText = btnStyle;
-        btnPlus.onclick = (e) => {
-            e.stopPropagation();
-            if (currentZoom < 19) { currentZoom++; redraw(); }
-        };
+        btnPlus.onclick = (e) => { e.stopPropagation(); if (currentZoom < 19) { currentZoom++; redraw(); } };
 
         const btnMinus = document.createElement('button');
         btnMinus.innerHTML = '−';
         btnMinus.style.cssText = btnStyle;
-        btnMinus.onclick = (e) => {
+        btnMinus.onclick = (e) => { e.stopPropagation(); if (currentZoom > 1) { currentZoom--; redraw(); } };
+
+        const btnLayer = document.createElement('button');
+        btnLayer.innerHTML = layer.icon;
+        btnLayer.title = `Слой: ${layer.name}`;
+        btnLayer.style.cssText = btnStyle + ' font-size: 16px;';
+        btnLayer.onclick = (e) => {
             e.stopPropagation();
-            if (currentZoom > 1) { currentZoom--; redraw(); }
+            currentLayerIndex = (currentLayerIndex + 1) % MAP_LAYERS.length;
+            // Сохраняем выбор в память расширения
+            chrome.storage.local.set({ lastLayerIndex: currentLayerIndex });
+            redraw();
         };
 
-        controls.appendChild(btnPlus);
-        controls.appendChild(btnMinus);
-        container.appendChild(controls);
+        zoomControls.appendChild(btnPlus);
+        zoomControls.appendChild(btnMinus);
+        layerControls.appendChild(btnLayer);
+
+        container.appendChild(zoomControls);
+        container.appendChild(layerControls);
 
         // Логика Drag-and-Drop
         container.onmousedown = (e) => {
@@ -387,15 +468,8 @@ function renderMicroMap(containerId, initialLat, initialLon, initialZoom = 15) {
             mapCanvas.style.top = `${mapTop}px`;
         };
 
-        window.onmouseup = () => {
-            if (isDragging) {
-                isDragging = false;
-                container.style.cursor = 'grab';
-            }
-        };
+        window.onmouseup = () => { if (isDragging) { isDragging = false; container.style.cursor = 'grab'; } };
     }
-
-    redraw();
 }
 
 function formatExposure(val) {
