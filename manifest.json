@@ -1,0 +1,52 @@
+{
+    "manifest_version": 3,
+    "name": "Yandex Disk EXIF Viewer",
+    "version": "1.0.43",
+    "permissions": [
+        "activeTab"
+    ],
+    "host_permissions": [
+        "https://*.yandex.ru/*",
+        "https://*.yadisk.net/*",
+        "https://*.yandex.net/*",
+        "https://*.openstreetmap.org/*"
+    ],
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'self';",
+        "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval'; child-src 'self';"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://disk.yandex.ru/*"
+            ],
+            "js": [
+                "exif.js",
+                "content.js"
+            ],
+            "css": [
+                "styles.css"
+            ]
+        },
+        {
+            "matches": [
+                "https://disk.yandex.ru/*"
+            ],
+            "js": [
+                "injected.js"
+            ],
+            "world": "MAIN",
+            "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "images/*"
+            ],
+            "matches": [
+                "https://disk.yandex.ru/*"
+            ]
+        }
+    ]
+}
